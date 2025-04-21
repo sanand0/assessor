@@ -1,4 +1,5 @@
 import { html, render } from "https://cdn.jsdelivr.net/npm/lit-html@2.7.0/lit-html.min.js";
+import { getProfile } from "https://aipipe.org/aipipe.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
@@ -8,6 +9,20 @@ const state = {
   results: {},
   isAssessing: false,
   dragActive: false,
+  token: null,
+};
+
+// Auth handling
+const initAuth = async () => {
+  const { token } = getProfile();
+  if (!token) {
+    document.getElementById("login").style.display = "block";
+    document.getElementById("app").style.display = "none";
+    return;
+  }
+  state.token = token;
+  document.getElementById("login").style.display = "none";
+  document.getElementById("app").style.display = "block";
 };
 
 // File conversion
@@ -32,16 +47,67 @@ const convertFileToText = async (file) => {
   }
 };
 
-// Mock API
-const mockAssessDocument = async (doc, clause) => {
-  await new Promise((r) => setTimeout(r, Math.random() * 2000));
-  const present = Math.random() > 0.5;
-  return {
-    present,
-    citation: present
-      ? `Found in section ${Math.floor(Math.random() * 10)}: "${clause}"`
-      : "No matching clause found in document",
-  };
+// LLM API
+const assessDocumentClauses = async (doc, clauses) => {
+  const prompt = `
+Analyze the following document content for the presence of specified clauses.
+For each clause, determine if it is present (true/false) and provide a brief reason with citation.
+
+Document content:
+${doc.content.slice(0, 8000)}... // Truncated for API limits
+
+Clauses to check:
+${clauses.map((c) => `- ${c.text}`).join("\n")}
+
+Respond with a JSON object in this exact format:
+{
+    "results": [
+        {
+            "clause": "clause text here",
+            "isPresent": true/false,
+            "reason": "Brief explanation with citation from the document"
+        },
+        // ... for each clause
+    ]
+}`;
+
+  const response = await fetch("https://aipipe.org/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${state.token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "gpt-4.1-mini",
+      messages: [
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+      response_format: { type: "json_object" },
+    }),
+  }).then((r) => r.json());
+
+  const results = {};
+  try {
+    const parsed = JSON.parse(response.choices[0].message.content);
+    parsed.results.forEach((result) => {
+      const clause = state.clauses.find((c) => c.text === result.clause);
+      if (clause)
+        results[clause.id] = {
+          loading: false,
+          data: {
+            present: result.isPresent,
+            citation: result.reason,
+          },
+          timestamp: Date.now(),
+        };
+    });
+  } catch (error) {
+    console.error("Error parsing LLM response:", error);
+  }
+  return results;
 };
 
 // Drag and drop handling
@@ -122,17 +188,14 @@ document.getElementById("assessButton").addEventListener("click", async () => {
 
   for (const doc of state.documents) {
     if (!state.results[doc.id]) state.results[doc.id] = {};
-    for (const clause of state.clauses) {
+    state.clauses.forEach((clause) => {
       state.results[doc.id][clause.id] = { loading: true };
-      updateUI();
-      const result = await mockAssessDocument(doc, clause);
-      state.results[doc.id][clause.id] = {
-        loading: false,
-        data: result,
-        timestamp: Date.now(),
-      };
-      updateUI();
-    }
+    });
+    updateUI();
+
+    const results = await assessDocumentClauses(doc, state.clauses);
+    state.results[doc.id] = { ...state.results[doc.id], ...results };
+    updateUI();
   }
 
   state.isAssessing = false;
@@ -278,5 +341,6 @@ const updateUI = () => {
 };
 
 // Initialize
+initAuth();
 setupDragDrop();
 updateUI();

@@ -42,3 +42,13 @@ GitHub Copilot (Agent) with Claude 3.5 Sonnet:
 > Shorten and simplify #file:script.js. Avoid braces for single-line blocks. Make the code elegant, readable, modern.
 
 ![Scaffolding](scaffolding-3.webp)
+
+[🔗 Commit](https://github.com/sanand0/assessor/commit/8363822)
+
+## LLM Functionality
+
+> Read https://github.com/sanand0/aipipe/blob/main/README.md to understand how to use it to make an LLM API call via AI Pipe.
+> Search for and read the OpenAI documentation to understand how make calls to the GPT models. Send a request to gpt-4.1-mini as the model via AI Pipe.
+> Assess document by document, asking the LLM to evaluate ALL clauses at one shot. Get a structured JSON schema-based response where, for each clause, we get a boolean Y/N as well as a REASON for the response. The reason will be shown on the tooltip.
+
+![Functionality](functionality-1.webp)
