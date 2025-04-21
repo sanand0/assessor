@@ -67,3 +67,19 @@ This caused an error.
 > Uncaught ReferenceError: initAuth is not defined
 
 ![Screenshot](functionality-2.webp)
+
+[🔗 Commit](https://github.com/sanand0/assessor/commit/d166dac)
+
+## Document README
+
+> Create a *professional* README.md for this application. Use best practices.
+> Explain WHY this app is useful, listing a few REAL-LIFE business use cases.
+> Include these use cases in #file:index.html as well for users to get ideas. (Use good iconography and typography.)
+> In README.md, explain how to use the app. > Include #file:prompts/functionality-1.webp as a screenshot.
+> Add a section for developers explaining how to set it up. (It's a static HTML app.)
+> The code is at https://github.com/sanand0/assessor and output at https://sanand0.github.io/assessor/
+> The author is S Anand <root.node@gmail.com>.
+> Add an MIT LICENSE.
+> This app was 100% LLM vibe-coded with no manual intervention. The prompts are at #file:prompts/README.md. Add a section mentioning this.
+
+![Screenshot](documentation-1.webp)
