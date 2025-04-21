@@ -10,11 +10,12 @@ const state = {
   isAssessing: false,
   dragActive: false,
   token: null,
+  cache: new Map(), // Document hash -> { clauses, results }
 };
 
 // Auth handling
 const initAuth = async () => {
-  const { token } = getProfile();
+  const { token } = getProfile() || {};
   if (!token) {
     document.getElementById("login").style.display = "block";
     document.getElementById("app").style.display = "none";
@@ -25,13 +26,53 @@ const initAuth = async () => {
   document.getElementById("app").style.display = "block";
 };
 
-// File conversion
+// UI Utilities
+const showToast = (message, isError = false) => {
+  const toast = document.createElement("div");
+  toast.className = `toast align-items-center border-0 ${isError ? "bg-danger" : "bg-success"} text-white`;
+  toast.innerHTML = `
+        <div class="d-flex">
+            <div class="toast-body">${message}</div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>`;
+  document.querySelector(".toast-container").appendChild(toast);
+  new bootstrap.Toast(toast, { autohide: true, delay: 5000 }).show();
+  toast.addEventListener("hidden.bs.toast", () => toast.remove());
+};
+
+const showModal = (doc, clause, result) => {
+  const modal = document.getElementById("reasonModal");
+  modal.querySelector(".modal-title").textContent = `${doc.name} - ${clause.text}`;
+  modal.querySelector(".modal-body").innerHTML = `
+        <div class="d-flex align-items-center mb-3">
+            <i class="bi ${
+              result.data.present ? "bi-check-circle-fill text-success" : "bi-x-circle-fill text-danger"
+            } fs-1 me-3"></i>
+            <div>
+                <h6 class="mb-0">${result.data.present ? "Clause Present" : "Clause Not Found"}</h6>
+                <small class="text-muted">Last checked: ${new Date(result.timestamp).toLocaleString()}</small>
+            </div>
+        </div>
+        <div class="border-start border-4 ${result.data.present ? "border-success" : "border-danger"} ps-3">
+            ${result.data.citation}
+        </div>`;
+  new bootstrap.Modal(modal).show();
+};
+
+// File handling
+const getDocumentHash = (doc) => `${doc.name}-${doc.content.length}`;
+
 const convertPdfToText = async (file) => {
-  const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
-  const pages = await Promise.all(
-    Array.from({ length: pdf.numPages }, (_, i) => pdf.getPage(i + 1).then((page) => page.getTextContent()))
-  );
-  return pages.flatMap((content) => content.items.map((item) => item.str)).join(" ");
+  try {
+    const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+    const pages = await Promise.all(
+      Array.from({ length: pdf.numPages }, (_, i) => pdf.getPage(i + 1).then((page) => page.getTextContent()))
+    );
+    return pages.flatMap((content) => content.items.map((item) => item.str)).join(" ");
+  } catch (error) {
+    showToast(`Error converting PDF ${file.name}: ${error.message}`, true);
+    return null;
+  }
 };
 
 const convertFileToText = async (file) => {
@@ -42,19 +83,30 @@ const convertFileToText = async (file) => {
     if (file.type === "text/plain") return await file.text();
     throw new Error("Unsupported file type");
   } catch (error) {
-    console.error(`Error converting ${file.name}:`, error);
+    showToast(`Error processing ${file.name}: ${error.message}`, true);
     return null;
   }
 };
 
 // LLM API
 const assessDocumentClauses = async (doc, clauses) => {
-  const prompt = `
+  const docHash = getDocumentHash(doc);
+  const clausesHash = clauses.map((c) => c.text).join("|");
+
+  // Check cache
+  const cached = state.cache.get(docHash);
+  if (cached?.clausesHash === clausesHash) {
+    showToast(`Using cached results for ${doc.name}`);
+    return cached.results;
+  }
+
+  try {
+    const prompt = `
 Analyze the following document content for the presence of specified clauses.
 For each clause, determine if it is present (true/false) and provide a brief reason with citation.
 
 Document content:
-${doc.content.slice(0, 8000)}... // Truncated for API limits
+${doc.content}
 
 Clauses to check:
 ${clauses.map((c) => `- ${c.text}`).join("\n")}
@@ -66,34 +118,33 @@ Respond with a JSON object in this exact format:
             "clause": "clause text here",
             "isPresent": true/false,
             "reason": "Brief explanation with citation from the document"
-        },
-        // ... for each clause
+        }
     ]
 }`;
 
-  const response = await fetch("https://aipipe.org/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${state.token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gpt-4.1-mini",
-      messages: [
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      response_format: { type: "json_object" },
-    }),
-  }).then((r) => r.json());
+    const response = await fetch("https://aipipe.org/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${state.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4.1-mini",
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+      }),
+    });
 
-  const results = {};
-  try {
-    const parsed = JSON.parse(response.choices[0].message.content);
+    if (!response.ok) throw new Error(`API returned ${response.status}`);
+
+    const data = await response.json();
+    if (!data.choices?.[0]?.message?.content) throw new Error("Invalid API response format");
+
+    const parsed = JSON.parse(data.choices[0].message.content);
+    const results = {};
+
     parsed.results.forEach((result) => {
-      const clause = state.clauses.find((c) => c.text === result.clause);
+      const clause = clauses.find((c) => c.text === result.clause);
       if (clause)
         results[clause.id] = {
           loading: false,
@@ -104,13 +155,17 @@ Respond with a JSON object in this exact format:
           timestamp: Date.now(),
         };
     });
+
+    // Cache results
+    state.cache.set(docHash, { clausesHash, results });
+    return results;
   } catch (error) {
-    console.error("Error parsing LLM response:", error);
+    showToast(`Error assessing ${doc.name}: ${error.message}`, true);
+    return null;
   }
-  return results;
 };
 
-// Drag and drop handling
+// Event handlers
 const setupDragDrop = () => {
   const zone = document.querySelector(".upload-zone");
   ["dragenter", "dragover", "dragleave", "drop"].forEach((event) =>
@@ -136,13 +191,9 @@ const setupDragDrop = () => {
     })
   );
 
-  zone.addEventListener("drop", async (e) => {
-    const files = Array.from(e.dataTransfer.files);
-    await handleFiles(files);
-  });
+  zone.addEventListener("drop", async (e) => handleFiles(Array.from(e.dataTransfer.files)));
 };
 
-// File handling
 const handleFiles = async (files) => {
   for (const file of files) {
     const text = await convertFileToText(file);
@@ -163,7 +214,6 @@ document.getElementById("documentUpload").addEventListener("change", async (e) =
   e.target.value = "";
 });
 
-// Clause handling
 document.getElementById("addClause").addEventListener("click", () => {
   const input = document.getElementById("clauseInput");
   if (input.value.trim()) {
@@ -176,11 +226,10 @@ document.getElementById("addClause").addEventListener("click", () => {
   }
 });
 
-document.getElementById("clauseInput").addEventListener("keypress", (e) => {
-  if (e.key === "Enter") document.getElementById("addClause").click();
-});
+document
+  .getElementById("clauseInput")
+  .addEventListener("keypress", (e) => e.key === "Enter" && document.getElementById("addClause").click());
 
-// Assessment handling
 document.getElementById("assessButton").addEventListener("click", async () => {
   if (state.isAssessing) return;
   state.isAssessing = true;
@@ -188,13 +237,23 @@ document.getElementById("assessButton").addEventListener("click", async () => {
 
   for (const doc of state.documents) {
     if (!state.results[doc.id]) state.results[doc.id] = {};
-    state.clauses.forEach((clause) => {
-      state.results[doc.id][clause.id] = { loading: true };
-    });
-    updateUI();
 
-    const results = await assessDocumentClauses(doc, state.clauses);
-    state.results[doc.id] = { ...state.results[doc.id], ...results };
+    // Set loading state for uncached results
+    const docHash = getDocumentHash(doc);
+    const cached = state.cache.get(docHash);
+    const clausesHash = state.clauses.map((c) => c.text).join("|");
+
+    if (!cached || cached.clausesHash !== clausesHash) {
+      state.clauses.forEach((clause) => {
+        state.results[doc.id][clause.id] = { loading: true };
+      });
+      updateUI();
+
+      const results = await assessDocumentClauses(doc, state.clauses);
+      if (results) state.results[doc.id] = { ...state.results[doc.id], ...results };
+    } else {
+      state.results[doc.id] = cached.results;
+    }
     updateUI();
   }
 
@@ -203,55 +262,54 @@ document.getElementById("assessButton").addEventListener("click", async () => {
 });
 
 // UI Templates
-const documentTemplate = () =>
-  html` ${state.documents.map(
-    (doc) => html`
-      <div class="list-group-item d-flex justify-content-between align-items-center animate__animated animate__fadeIn">
-        <span title="${doc.name}">
-          <i class="bi ${getFileIcon(doc.type)} me-2 text-primary"></i>
-          ${doc.name}
-        </span>
-        <button
-          class="btn btn-sm btn-outline-danger btn-float"
-          @click=${() => {
-            delete state.results[doc.id];
-            state.documents = state.documents.filter((d) => d !== doc);
-            updateUI();
-          }}
-        >
-          <i class="bi bi-trash3"></i>
-        </button>
-      </div>
-    `
-  )}`;
+const documentTemplate = () => html` ${state.documents.map(
+  (doc) => html`
+    <div class="list-group-item d-flex justify-content-between align-items-center animate__animated animate__fadeIn">
+      <span title="${doc.name}">
+        <i
+          class="bi ${doc.type.includes("pdf")
+            ? "bi-file-pdf"
+            : doc.type.includes("wordprocessingml")
+            ? "bi-file-word"
+            : "bi-file-text"} me-2 text-primary"
+        ></i>
+        ${doc.name}
+      </span>
+      <button
+        class="btn btn-sm btn-outline-danger btn-float"
+        @click=${() => {
+          delete state.results[doc.id];
+          state.cache.delete(getDocumentHash(doc));
+          state.documents = state.documents.filter((d) => d !== doc);
+          updateUI();
+        }}
+      >
+        <i class="bi bi-trash3"></i>
+      </button>
+    </div>
+  `
+)}`;
 
-const getFileIcon = (type) => {
-  if (type === "application/pdf") return "bi-file-pdf";
-  if (type.includes("wordprocessingml")) return "bi-file-word";
-  return "bi-file-text";
-};
-
-const clauseTemplate = () =>
-  html` ${state.clauses.map(
-    (clause) => html`
-      <div class="list-group-item d-flex justify-content-between align-items-center animate__animated animate__fadeIn">
-        <span>
-          <i class="bi bi-check-circle me-2 text-primary"></i>
-          ${clause.text}
-        </span>
-        <button
-          class="btn btn-sm btn-outline-danger btn-float"
-          @click=${() => {
-            Object.values(state.results).forEach((r) => delete r[clause.id]);
-            state.clauses = state.clauses.filter((c) => c !== clause);
-            updateUI();
-          }}
-        >
-          <i class="bi bi-trash3"></i>
-        </button>
-      </div>
-    `
-  )}`;
+const clauseTemplate = () => html` ${state.clauses.map(
+  (clause) => html`
+    <div class="list-group-item d-flex justify-content-between align-items-center animate__animated animate__fadeIn">
+      <span title="${clause.text}">
+        <i class="bi bi-check-circle me-2 text-primary"></i>
+        ${clause.text}
+      </span>
+      <button
+        class="btn btn-sm btn-outline-danger btn-float"
+        @click=${() => {
+          Object.values(state.results).forEach((r) => delete r[clause.id]);
+          state.clauses = state.clauses.filter((c) => c !== clause);
+          updateUI();
+        }}
+      >
+        <i class="bi bi-trash3"></i>
+      </button>
+    </div>
+  `
+)}`;
 
 const getCellContent = (result) => {
   if (!result)
@@ -264,14 +322,13 @@ const getCellContent = (result) => {
     >
       <div class="spinner-border progress-spinner text-primary"></div>
     </div>`;
+
   const isNew = Date.now() - result.timestamp < 2000;
   return html`
     <div
       class="clause-cell d-flex align-items-center justify-content-center
                     ${result.data.present ? "text-success" : "text-danger"}
                     ${isNew ? "animate__animated animate__bounceIn" : ""}"
-      data-bs-toggle="tooltip"
-      title="${result.data.citation}"
     >
       <i class="bi ${result.data.present ? "bi-check-circle-fill" : "bi-x-circle-fill"} fs-4"></i>
     </div>
@@ -285,7 +342,7 @@ const resultsTemplate = () => html`
           <thead class="table-light">
             <tr>
               <th class="align-middle">Document</th>
-              ${state.clauses.map((clause) => html` <th class="text-center align-middle">${clause.text}</th> `)}
+              ${state.clauses.map((clause) => html`<th class="text-center align-middle">${clause.text}</th>`)}
             </tr>
           </thead>
           <tbody>
@@ -293,27 +350,26 @@ const resultsTemplate = () => html`
               (doc) => html`
                 <tr>
                   <td class="align-middle">
-                    <i class="bi ${getFileIcon(doc.type)} me-2 text-primary"></i>
+                    <i
+                      class="bi ${doc.type.includes("pdf")
+                        ? "bi-file-pdf"
+                        : doc.type.includes("wordprocessingml")
+                        ? "bi-file-word"
+                        : "bi-file-text"} me-2 text-primary"
+                    ></i>
                     ${doc.name}
                   </td>
                   ${state.clauses.map(
                     (clause) => html`
-                      <td
-                        class="p-0 text-center"
-                        @click=${async () => {
-                          if (!state.results[doc.id]) state.results[doc.id] = {};
-                          state.results[doc.id][clause.id] = { loading: true };
-                          updateUI();
-                          const result = await mockAssessDocument(doc, clause);
-                          state.results[doc.id][clause.id] = {
-                            loading: false,
-                            data: result,
-                            timestamp: Date.now(),
-                          };
-                          updateUI();
-                        }}
-                      >
-                        ${getCellContent(state.results[doc.id]?.[clause.id])}
+                      <td class="p-0 text-center">
+                        <div
+                          @click=${() => {
+                            const result = state.results[doc.id]?.[clause.id];
+                            if (result?.data) showModal(doc, clause, result);
+                          }}
+                        >
+                          ${getCellContent(state.results[doc.id]?.[clause.id])}
+                        </div>
                       </td>
                     `
                   )}

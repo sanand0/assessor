@@ -24,7 +24,7 @@ GitHub Copilot (Agent) with Claude 3.5 Sonnet:
 > Create the SCAFFOLDING for this in #file:index.html using Bootstrap (minimize custom styles, prefer Bootstrap classes). Create a script.js that uses lit-html to implement basic functionality. For now, mock the LLM call as an API.
 > Write VERY concise code.
 
-![Scaffolding](scaffolding-1.webp)
+![Screenshot](scaffolding-1.webp)
 
 [🔗 Commit](https://github.com/sanand0/assessor/commit/d72ff9d)
 
@@ -35,13 +35,13 @@ GitHub Copilot (Agent) with Claude 3.5 Sonnet:
 > Ensure that the table's first column does not exceed 25 em width (in case there are long filenames).
 > Convert files and store files as text as they are uploaded using Mammoth (for DOCX) and PDFJS (for PDF) via CDN.
 
-![Scaffolding](scaffolding-2.webp)
+![Screenshot](scaffolding-2.webp)
 
 > The table header row height still exceeds what we want. If it'll be complex to implement, undo all changes related to table row height.
 > Add an "Assess" button that will trigger the assessment, at which point we will call the LLM API (mocked) document by document.
 > Shorten and simplify #file:script.js. Avoid braces for single-line blocks. Make the code elegant, readable, modern.
 
-![Scaffolding](scaffolding-3.webp)
+![Screenshot](scaffolding-3.webp)
 
 [🔗 Commit](https://github.com/sanand0/assessor/commit/8363822)
 
@@ -51,4 +51,19 @@ GitHub Copilot (Agent) with Claude 3.5 Sonnet:
 > Search for and read the OpenAI documentation to understand how make calls to the GPT models. Send a request to gpt-4.1-mini as the model via AI Pipe.
 > Assess document by document, asking the LLM to evaluate ALL clauses at one shot. Get a structured JSON schema-based response where, for each clause, we get a boolean Y/N as well as a REASON for the response. The reason will be shown on the tooltip.
 
-![Functionality](functionality-1.webp)
+![Screenshot](functionality-1.webp)
+
+## Update Functionality
+
+> If the document has already been assessed, don't send it to the LLM for re-assessment when "Assess Documents" is clicked. Cache it - provided the clauses and document have not changed.
+> When the user clicks on the table cells, show a Bootstrap popup with the reason.
+> In case of errors, ALWAYS show them prominently to the user as a Bootstrap Toast notification.
+> Don't truncate the input. Send the full input.
+> Center the cells with icons.
+> Restructure the code CONCISELY. Remove redundant code.
+
+This caused an error.
+
+> Uncaught ReferenceError: initAuth is not defined
+
+![Screenshot](functionality-2.webp)
