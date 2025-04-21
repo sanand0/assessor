@@ -1,6 +1,6 @@
 # Prompts
 
-## Design
+## Ideate Design
 
 ChatGPT O4 Mini High:
 
@@ -16,10 +16,29 @@ The user wants a beautiful, modern visual design for an app that tracks document
 
 ![Design](design-2.webp)
 
-## Scaffolding
+## Create Scaffolding
+
+GitHub Copilot (Agent) with Claude 3.5 Sonnet:
 
 > #file:README.md has the context of the application I'm building. #file:design-2.webp is the design I'm looking for.
-> Create the SCAFFOLDING for this in #file:index.html  using Bootstrap (minimize custom styles, prefer Bootstrap classes). Create a script.js that uses lit-html to implement basic functionality. For now, mock the LLM call as an API.
+> Create the SCAFFOLDING for this in #file:index.html using Bootstrap (minimize custom styles, prefer Bootstrap classes). Create a script.js that uses lit-html to implement basic functionality. For now, mock the LLM call as an API.
 > Write VERY concise code.
 
 ![Scaffolding](scaffolding-1.webp)
+
+[🔗 Commit](https://github.com/sanand0/assessor/commit/d72ff9d)
+
+## Update Scaffolding
+
+> The uploaded filenames should fit within the list and not go outside.
+> Ensure that the table header height does not exceed 3 rows (in case there are long clauses).
+> Ensure that the table's first column does not exceed 25 em width (in case there are long filenames).
+> Convert files and store files as text as they are uploaded using Mammoth (for DOCX) and PDFJS (for PDF) via CDN.
+
+![Scaffolding](scaffolding-2.webp)
+
+> The table header row height still exceeds what we want. If it'll be complex to implement, undo all changes related to table row height.
+> Add an "Assess" button that will trigger the assessment, at which point we will call the LLM API (mocked) document by document.
+> Shorten and simplify #file:script.js. Avoid braces for single-line blocks. Make the code elegant, readable, modern.
+
+![Scaffolding](scaffolding-3.webp)

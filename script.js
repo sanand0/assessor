@@ -1,88 +1,212 @@
 import { html, render } from "https://cdn.jsdelivr.net/npm/lit-html@2.7.0/lit-html.min.js";
 
-let documents = [];
-let clauses = [];
-let results = {};
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
-// Mock API call
-const assessDocument = async (doc, clause) => {
+const state = {
+  documents: [],
+  clauses: [],
+  results: {},
+  isAssessing: false,
+  dragActive: false,
+};
+
+// File conversion
+const convertPdfToText = async (file) => {
+  const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+  const pages = await Promise.all(
+    Array.from({ length: pdf.numPages }, (_, i) => pdf.getPage(i + 1).then((page) => page.getTextContent()))
+  );
+  return pages.flatMap((content) => content.items.map((item) => item.str)).join(" ");
+};
+
+const convertFileToText = async (file) => {
+  try {
+    if (file.type === "application/pdf") return await convertPdfToText(file);
+    if (file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+      return (await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() })).value;
+    if (file.type === "text/plain") return await file.text();
+    throw new Error("Unsupported file type");
+  } catch (error) {
+    console.error(`Error converting ${file.name}:`, error);
+    return null;
+  }
+};
+
+// Mock API
+const mockAssessDocument = async (doc, clause) => {
   await new Promise((r) => setTimeout(r, Math.random() * 2000));
+  const present = Math.random() > 0.5;
   return {
-    present: Math.random() > 0.5,
-    citation:
-      Math.random() > 0.5
-        ? `Found in section ${Math.floor(Math.random() * 10)}: "${clause}"`
-        : `No matching clause found in document`,
+    present,
+    citation: present
+      ? `Found in section ${Math.floor(Math.random() * 10)}: "${clause}"`
+      : "No matching clause found in document",
   };
 };
 
-// Document handling
-document.getElementById("documentUpload").addEventListener("change", (e) => {
-  documents = [...documents, ...Array.from(e.target.files)];
-  renderAll();
+// Drag and drop handling
+const setupDragDrop = () => {
+  const zone = document.querySelector(".upload-zone");
+  ["dragenter", "dragover", "dragleave", "drop"].forEach((event) =>
+    zone.addEventListener(event, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    })
+  );
+
+  ["dragenter", "dragover"].forEach((event) =>
+    zone.addEventListener(event, () => {
+      state.dragActive = true;
+      zone.classList.add("pulse-border");
+      updateUI();
+    })
+  );
+
+  ["dragleave", "drop"].forEach((event) =>
+    zone.addEventListener(event, () => {
+      state.dragActive = false;
+      zone.classList.remove("pulse-border");
+      updateUI();
+    })
+  );
+
+  zone.addEventListener("drop", async (e) => {
+    const files = Array.from(e.dataTransfer.files);
+    await handleFiles(files);
+  });
+};
+
+// File handling
+const handleFiles = async (files) => {
+  for (const file of files) {
+    const text = await convertFileToText(file);
+    if (text) {
+      state.documents.push({
+        name: file.name,
+        content: text,
+        type: file.type,
+        id: Date.now() + Math.random(),
+      });
+      updateUI();
+    }
+  }
+};
+
+document.getElementById("documentUpload").addEventListener("change", async (e) => {
+  await handleFiles(Array.from(e.target.files));
+  e.target.value = "";
 });
 
 // Clause handling
 document.getElementById("addClause").addEventListener("click", () => {
   const input = document.getElementById("clauseInput");
   if (input.value.trim()) {
-    clauses.push(input.value.trim());
+    state.clauses.push({
+      text: input.value.trim(),
+      id: Date.now() + Math.random(),
+    });
     input.value = "";
-    renderAll();
+    updateUI();
   }
 });
 
-// Render functions
-const documentTemplate = () => html`
-  ${documents.map(
-    (doc) => html`
-      <div class="list-group-item d-flex justify-content-between align-items-center">
-        <span>${doc.name}</span>
-        <button
-          class="btn btn-sm btn-danger"
-          @click=${() => {
-            documents = documents.filter((d) => d !== doc);
-            renderAll();
-          }}
-        >
-          ×
-        </button>
-      </div>
-    `
-  )}
-`;
+document.getElementById("clauseInput").addEventListener("keypress", (e) => {
+  if (e.key === "Enter") document.getElementById("addClause").click();
+});
 
-const clauseTemplate = () => html`
-  ${clauses.map(
-    (clause) => html`
-      <div class="list-group-item d-flex justify-content-between align-items-center">
-        <span>${clause}</span>
+// Assessment handling
+document.getElementById("assessButton").addEventListener("click", async () => {
+  if (state.isAssessing) return;
+  state.isAssessing = true;
+  updateUI();
+
+  for (const doc of state.documents) {
+    if (!state.results[doc.id]) state.results[doc.id] = {};
+    for (const clause of state.clauses) {
+      state.results[doc.id][clause.id] = { loading: true };
+      updateUI();
+      const result = await mockAssessDocument(doc, clause);
+      state.results[doc.id][clause.id] = {
+        loading: false,
+        data: result,
+        timestamp: Date.now(),
+      };
+      updateUI();
+    }
+  }
+
+  state.isAssessing = false;
+  updateUI();
+});
+
+// UI Templates
+const documentTemplate = () =>
+  html` ${state.documents.map(
+    (doc) => html`
+      <div class="list-group-item d-flex justify-content-between align-items-center animate__animated animate__fadeIn">
+        <span title="${doc.name}">
+          <i class="bi ${getFileIcon(doc.type)} me-2 text-primary"></i>
+          ${doc.name}
+        </span>
         <button
-          class="btn btn-sm btn-danger"
+          class="btn btn-sm btn-outline-danger btn-float"
           @click=${() => {
-            clauses = clauses.filter((c) => c !== clause);
-            renderAll();
+            delete state.results[doc.id];
+            state.documents = state.documents.filter((d) => d !== doc);
+            updateUI();
           }}
         >
-          ×
+          <i class="bi bi-trash3"></i>
         </button>
       </div>
     `
-  )}
-`;
+  )}`;
+
+const getFileIcon = (type) => {
+  if (type === "application/pdf") return "bi-file-pdf";
+  if (type.includes("wordprocessingml")) return "bi-file-word";
+  return "bi-file-text";
+};
+
+const clauseTemplate = () =>
+  html` ${state.clauses.map(
+    (clause) => html`
+      <div class="list-group-item d-flex justify-content-between align-items-center animate__animated animate__fadeIn">
+        <span>
+          <i class="bi bi-check-circle me-2 text-primary"></i>
+          ${clause.text}
+        </span>
+        <button
+          class="btn btn-sm btn-outline-danger btn-float"
+          @click=${() => {
+            Object.values(state.results).forEach((r) => delete r[clause.id]);
+            state.clauses = state.clauses.filter((c) => c !== clause);
+            updateUI();
+          }}
+        >
+          <i class="bi bi-trash3"></i>
+        </button>
+      </div>
+    `
+  )}`;
 
 const getCellContent = (result) => {
   if (!result)
-    return html`<div class="clause-cell d-flex align-items-center justify-content-center text-muted">-</div>`;
+    return html` <div class="clause-cell d-flex align-items-center justify-content-center text-muted">
+      <i class="bi bi-dash-circle fs-4"></i>
+    </div>`;
   if (result.loading)
-    return html` <div class="clause-cell d-flex align-items-center justify-content-center">
+    return html` <div
+      class="clause-cell d-flex align-items-center justify-content-center animate__animated animate__pulse animate__infinite"
+    >
       <div class="spinner-border progress-spinner text-primary"></div>
     </div>`;
+  const isNew = Date.now() - result.timestamp < 2000;
   return html`
     <div
-      class="clause-cell d-flex align-items-center justify-content-center ${result.data.present
-        ? "text-success"
-        : "text-danger"}"
+      class="clause-cell d-flex align-items-center justify-content-center
+                    ${result.data.present ? "text-success" : "text-danger"}
+                    ${isNew ? "animate__animated animate__bounceIn" : ""}"
       data-bs-toggle="tooltip"
       title="${result.data.citation}"
     >
@@ -92,46 +216,67 @@ const getCellContent = (result) => {
 };
 
 const resultsTemplate = () => html`
-  <table class="table table-bordered">
-    <thead>
-      <tr>
-        <th>Document</th>
-        ${clauses.map((clause) => html`<th class="text-center">${clause}</th>`)}
-      </tr>
-    </thead>
-    <tbody>
-      ${documents.map(
-        (doc) => html`
-          <tr>
-            <td>${doc.name}</td>
-            ${clauses.map(
-              (clause) => html`
-                <td
-                  class="p-0 text-center"
-                  @click=${async () => {
-                    if (!results[doc.name]) results[doc.name] = {};
-                    results[doc.name][clause] = { loading: true };
-                    renderAll();
-                    const result = await assessDocument(doc, clause);
-                    results[doc.name][clause] = { loading: false, data: result };
-                    renderAll();
-                  }}
-                >
-                  ${getCellContent(results[doc.name]?.[clause])}
-                </td>
+  ${state.documents.length && state.clauses.length
+    ? html`
+        <table class="table table-bordered">
+          <thead class="table-light">
+            <tr>
+              <th class="align-middle">Document</th>
+              ${state.clauses.map((clause) => html` <th class="text-center align-middle">${clause.text}</th> `)}
+            </tr>
+          </thead>
+          <tbody>
+            ${state.documents.map(
+              (doc) => html`
+                <tr>
+                  <td class="align-middle">
+                    <i class="bi ${getFileIcon(doc.type)} me-2 text-primary"></i>
+                    ${doc.name}
+                  </td>
+                  ${state.clauses.map(
+                    (clause) => html`
+                      <td
+                        class="p-0 text-center"
+                        @click=${async () => {
+                          if (!state.results[doc.id]) state.results[doc.id] = {};
+                          state.results[doc.id][clause.id] = { loading: true };
+                          updateUI();
+                          const result = await mockAssessDocument(doc, clause);
+                          state.results[doc.id][clause.id] = {
+                            loading: false,
+                            data: result,
+                            timestamp: Date.now(),
+                          };
+                          updateUI();
+                        }}
+                      >
+                        ${getCellContent(state.results[doc.id]?.[clause.id])}
+                      </td>
+                    `
+                  )}
+                </tr>
               `
             )}
-          </tr>
-        `
-      )}
-    </tbody>
-  </table>
+          </tbody>
+        </table>
+      `
+    : html`
+        <div class="text-center text-muted py-5">
+          <i class="bi bi-table display-1 mb-3 d-block"></i>
+          <h5>No Results Yet</h5>
+          <p>Upload documents and add clauses to see assessment results</p>
+        </div>
+      `}
 `;
 
-const renderAll = () => {
+const updateUI = () => {
   render(documentTemplate(), document.getElementById("documentList"));
   render(clauseTemplate(), document.getElementById("clauseList"));
   render(resultsTemplate(), document.getElementById("resultsTable"));
+  document.getElementById("assessButton").disabled =
+    !state.documents.length || !state.clauses.length || state.isAssessing;
 };
 
-renderAll();
+// Initialize
+setupDragDrop();
+updateUI();
