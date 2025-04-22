@@ -1,7 +1,7 @@
 import { html, render } from "https://cdn.jsdelivr.net/npm/lit-html@2.7.0/lit-html.min.js";
 import { getProfile } from "https://aipipe.org/aipipe.js";
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+import { sanitizeText, validateFile, getDocumentHash, showToast } from "./utils.js";
+import { convertFileToText } from "./fileConverter.js";
 
 const state = {
   documents: [],
@@ -10,7 +10,7 @@ const state = {
   isAssessing: false,
   dragActive: false,
   token: null,
-  cache: new Map(), // Document hash -> { clauses, results }
+  cache: new Map(),
 };
 
 // Auth handling
@@ -27,22 +27,9 @@ const initAuth = async () => {
 };
 
 // UI Utilities
-const showToast = (message, isError = false) => {
-  const toast = document.createElement("div");
-  toast.className = `toast align-items-center border-0 ${isError ? "bg-danger" : "bg-success"} text-white`;
-  toast.innerHTML = `
-        <div class="d-flex">
-            <div class="toast-body">${message}</div>
-            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
-        </div>`;
-  document.querySelector(".toast-container").appendChild(toast);
-  new bootstrap.Toast(toast, { autohide: true, delay: 5000 }).show();
-  toast.addEventListener("hidden.bs.toast", () => toast.remove());
-};
-
 const showModal = (doc, clause, result) => {
   const modal = document.getElementById("reasonModal");
-  modal.querySelector(".modal-title").textContent = `${doc.name} - ${clause.text}`;
+  modal.querySelector(".modal-title").textContent = `${doc.name} - ${sanitizeText(clause.text)}`;
   modal.querySelector(".modal-body").innerHTML = `
         <div class="d-flex align-items-center mb-3">
             <i class="bi ${
@@ -57,35 +44,6 @@ const showModal = (doc, clause, result) => {
             ${result.data.citation}
         </div>`;
   new bootstrap.Modal(modal).show();
-};
-
-// File handling
-const getDocumentHash = (doc) => `${doc.name}-${doc.content.length}`;
-
-const convertPdfToText = async (file) => {
-  try {
-    const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
-    const pages = await Promise.all(
-      Array.from({ length: pdf.numPages }, (_, i) => pdf.getPage(i + 1).then((page) => page.getTextContent()))
-    );
-    return pages.flatMap((content) => content.items.map((item) => item.str)).join(" ");
-  } catch (error) {
-    showToast(`Error converting PDF ${file.name}: ${error.message}`, true);
-    return null;
-  }
-};
-
-const convertFileToText = async (file) => {
-  try {
-    if (file.type === "application/pdf") return await convertPdfToText(file);
-    if (file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-      return (await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() })).value;
-    if (file.type === "text/plain") return await file.text();
-    throw new Error("Unsupported file type");
-  } catch (error) {
-    showToast(`Error processing ${file.name}: ${error.message}`, true);
-    return null;
-  }
 };
 
 // LLM API
@@ -196,8 +154,9 @@ const setupDragDrop = () => {
 
 const handleFiles = async (files) => {
   for (const file of files) {
-    const text = await convertFileToText(file);
-    if (text) {
+    try {
+      validateFile(file);
+      const text = await convertFileToText(file);
       state.documents.push({
         name: file.name,
         content: text,
@@ -205,6 +164,8 @@ const handleFiles = async (files) => {
         id: Date.now() + Math.random(),
       });
       updateUI();
+    } catch (error) {
+      showToast(error.message, true);
     }
   }
 };
@@ -262,54 +223,56 @@ document.getElementById("assessButton").addEventListener("click", async () => {
 });
 
 // UI Templates
-const documentTemplate = () => html` ${state.documents.map(
-  (doc) => html`
-    <div class="list-group-item d-flex justify-content-between align-items-center animate__animated animate__fadeIn">
-      <span title="${doc.name}">
-        <i
-          class="bi ${doc.type.includes("pdf")
-            ? "bi-file-pdf"
-            : doc.type.includes("wordprocessingml")
-            ? "bi-file-word"
-            : "bi-file-text"} me-2 text-primary"
-        ></i>
-        ${doc.name}
-      </span>
-      <button
-        class="btn btn-sm btn-outline-danger btn-float"
-        @click=${() => {
-          delete state.results[doc.id];
-          state.cache.delete(getDocumentHash(doc));
-          state.documents = state.documents.filter((d) => d !== doc);
-          updateUI();
-        }}
-      >
-        <i class="bi bi-trash3"></i>
-      </button>
-    </div>
-  `
-)}`;
+const documentTemplate = () =>
+  html` ${state.documents.map(
+    (doc) => html`
+      <div class="list-group-item d-flex justify-content-between align-items-center animate__animated animate__fadeIn">
+        <span title="${doc.name}">
+          <i
+            class="bi ${doc.type.includes("pdf")
+              ? "bi-file-pdf"
+              : doc.type.includes("wordprocessingml")
+              ? "bi-file-word"
+              : "bi-file-text"} me-2 text-primary"
+          ></i>
+          ${doc.name}
+        </span>
+        <button
+          class="btn btn-sm btn-outline-danger btn-float"
+          @click=${() => {
+            delete state.results[doc.id];
+            state.cache.delete(getDocumentHash(doc));
+            state.documents = state.documents.filter((d) => d !== doc);
+            updateUI();
+          }}
+        >
+          <i class="bi bi-trash3"></i>
+        </button>
+      </div>
+    `
+  )}`;
 
-const clauseTemplate = () => html` ${state.clauses.map(
-  (clause) => html`
-    <div class="list-group-item d-flex justify-content-between align-items-center animate__animated animate__fadeIn">
-      <span title="${clause.text}">
-        <i class="bi bi-check-circle me-2 text-primary"></i>
-        ${clause.text}
-      </span>
-      <button
-        class="btn btn-sm btn-outline-danger btn-float"
-        @click=${() => {
-          Object.values(state.results).forEach((r) => delete r[clause.id]);
-          state.clauses = state.clauses.filter((c) => c !== clause);
-          updateUI();
-        }}
-      >
-        <i class="bi bi-trash3"></i>
-      </button>
-    </div>
-  `
-)}`;
+const clauseTemplate = () =>
+  html`${state.clauses.map(
+    (clause) => html`
+      <div class="list-group-item d-flex justify-content-between align-items-center animate__animated animate__fadeIn">
+        <span title="${sanitizeText(clause.text)}">
+          <i class="bi bi-check-circle me-2 text-primary"></i>
+          ${sanitizeText(clause.text)}
+        </span>
+        <button
+          class="btn btn-sm btn-outline-danger btn-float"
+          @click=${() => {
+            Object.values(state.results).forEach((r) => delete r[clause.id]);
+            state.clauses = state.clauses.filter((c) => c !== clause);
+            updateUI();
+          }}
+        >
+          <i class="bi bi-trash3"></i>
+        </button>
+      </div>
+    `
+  )}`;
 
 const getCellContent = (result) => {
   if (!result)
@@ -342,7 +305,9 @@ const resultsTemplate = () => html`
           <thead class="table-light">
             <tr>
               <th class="align-middle">Document</th>
-              ${state.clauses.map((clause) => html`<th class="text-center align-middle">${clause.text}</th>`)}
+              ${state.clauses.map(
+                (clause) => html`<th class="text-center align-middle">${sanitizeText(clause.text)}</th>`
+              )}
             </tr>
           </thead>
           <tbody>

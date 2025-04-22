@@ -83,3 +83,33 @@ This caused an error.
 > This app was 100% LLM vibe-coded with no manual intervention. The prompts are at #file:prompts/README.md. Add a section mentioning this.
 
 ![Screenshot](documentation-1.webp)
+
+[🔗 Commit](https://github.com/sanand0/assessor/commit/578fb93)
+
+## Deployment
+
+> Avoid GitHub running Jekyll actions.
+
+## Code Review
+
+[ChatGPT: O4-Mini-High](https://chatgpt.com/c/680627dd-bf50-800c-9d4a-cb1b3b82c7b9)
+
+> Review the code at https://github.com/sanand0/assessor and provide a detailed assessment of how the code could be improved. Evaluate based on every possible candle a world class developer or architect would look at it from
+
+... and then:
+
+> Rank order each suggestion based on how easy or hard it is to implement. Then, rank order each of these based on the benefit to the end user. Based on both of these, suggest which are the quick wins I should go after, i.e., high benefit to the user and low effort to implement.
+
+Summary of suggestions:
+
+- Lazy‑load heavy libraries (#6)
+- Input validation & sanitization (#9)
+- Enforce file size/type limits (#10)
+- Global progress indicator & cancellation (#17)
+
+GitHub Copilot (Agent) with Claude 3.5 Sonnet:
+
+> - Lazy‑load heavy libraries. PDF.js and Mammoth.js are large. Only load them when needed (e.g. dynamic imports inside convertFileToText), reducing initial payload.
+> - Input validation & sanitization. User‑entered clauses (clause.text) get injected into the DOM and the LLM prompt verbatim. Escape or sanitize to prevent XSS in case future UI changes.
+> - Enforce file size/type limits. Currently any .pdf/.docx/.txt can be uploaded. Impose client‑side size limits and alert the user.
+> - Refactor the code into modular, modern, concise, readable ESM.
