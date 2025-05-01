@@ -113,3 +113,5 @@ GitHub Copilot (Agent) with Claude 3.5 Sonnet:
 > - Input validation & sanitization. User‑entered clauses (clause.text) get injected into the DOM and the LLM prompt verbatim. Escape or sanitize to prevent XSS in case future UI changes.
 > - Enforce file size/type limits. Currently any .pdf/.docx/.txt can be uploaded. Impose client‑side size limits and alert the user.
 > - Refactor the code into modular, modern, concise, readable ESM.
+
+[🔗 Commit](https://github.com/sanand0/assessor/commit/6e9608d)
